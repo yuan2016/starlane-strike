@@ -8,6 +8,7 @@ import { Player } from '../player/Player';
 import { PlayerStats } from '../player/PlayerStats';
 import { SpecialWeapon } from '../player/SpecialWeapon';
 import { Weapon } from '../player/Weapon';
+import { WingmanSystem } from '../player/Wingman';
 import { Starfield } from '../scene/Starfield';
 import { BossManager } from '../boss/BossManager';
 import { BulletSystem } from '../combat/BulletSystem';
@@ -79,6 +80,13 @@ export class Game {
   kills = 0;
   coins = 0;
 
+  readonly wingmen = new WingmanSystem();
+
+  /** 通关后的拾取缓冲：不立刻弹结算面板 */
+  private levelClearPending = false;
+  private levelClearTimer = 0;
+  private readonly LEVEL_CLEAR_DELAY = 4.5;
+
   private readonly loop: GameLoop;
   private readonly container: HTMLElement;
 
@@ -103,7 +111,7 @@ export class Game {
     configureProceduralTextures(this.quality);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.quality.pixelRatioCap));
     this.player = new Player(this.progress.aircraftDef);
-    this.starfield = new Starfield(this.quality);
+    this.starfield = new Starfield();
 
     // HDR 环境光：给金属材质提供反射内容（metalness 高的材质不再发黑）
     this.envTexture = createEnvironmentTexture(this.renderer);
@@ -149,6 +157,7 @@ export class Game {
     this.scene.fog = new THREE.Fog(0x05060f, 90, 300);
     this.scene.add(this.starfield.group);
     this.scene.add(this.player.object);
+    this.scene.add(this.wingmen.group);
     this.scene.add(this.particles.points);
     this.scene.add(this.explosions.group);
     this.scene.add(this.bullets.group);
@@ -221,7 +230,12 @@ export class Game {
       this.ui.setBoss(true, this.bossManager.boss.name, 1, 1);
       this.audio.startMusic('boss');
     };
-    this.levelManager.onCleared = () => this.onLevelCleared();
+    this.levelManager.onCleared = () => {
+      if (this.levelClearPending) return;
+      this.levelClearPending = true;
+      this.levelClearTimer = this.LEVEL_CLEAR_DELAY;
+      this.ui.popPickup('任务完成！继续拾取奖励', 'coin');
+    };
 
     // Boss 阶段切换演出：横幅 + 血条闪烁 + 辉光增强
     this.bossManager.onPhaseChange = (phase) => {
@@ -266,10 +280,13 @@ export class Game {
     this.score = 0;
     this.kills = 0;
     this.coins = 0;
+    this.levelClearPending = false;
+    this.levelClearTimer = 0;
     // 应用机库中的最新装配（机体 / 武器 / 强化）
     this.applyProgress();
     this.player.reset();
     this.player.object.visible = true;
+    this.wingmen.reset(this.player.worldPosition);
     this.bullets.clear();
     this.pickups.clear();
     this.weapon.resetPower();
@@ -355,8 +372,22 @@ export class Game {
     this.weapon.setModifiers(mods.damageMul, mods.fireRateMul, mods.critRate);
     this.stats.setMax(mods.maxHp, mods.maxShield);
     this.stats.damageReduction = mods.damageReduction;
+    this.wingmen.setModifiers(mods.damageMul, mods.fireRateMul, mods.critRate);
     this.ui.setWeapon(this.weapon.displayName);
     this.ui.setCoins(this.progress.coins);
+  }
+
+  /**
+   * 战机参数恢复初始：机体 / 武器等级 / 属性强化回到初始值，
+   * 并立刻写入本局（换回初始机体模型、初始武器与初始 HP / 护盾上限）。
+   * 金币与关卡进度保留。
+   */
+  resetAircraftParams(): void {
+    this.progress.resetAircraft();
+    this.applyProgress();
+    this.ui.setStats(this.stats.hpRatio, this.stats.shieldRatio, this.score);
+    this.hangar.render();
+    this.levelSelect.render();
   }
 
   /** 追踪武器的目标：优先最近的敌机，其次 Boss 核心 */
@@ -489,7 +520,8 @@ export class Game {
     this.audio.startMusic('menu');
   }
 
-  private onLevelCleared(): void {
+  private finishLevelClear(): void {
+    this.levelClearPending = false;
     this.state = 'cleared';
     const stars = this.stats.hpRatio > 0.7 ? 3 : this.stats.hpRatio > 0.35 ? 2 : 1;
     const order = levelIndex(this.level.id);
@@ -520,6 +552,7 @@ export class Game {
     this.explosions.dispose();
     this.bullets.dispose();
     this.pickups.dispose();
+    this.wingmen.dispose();
     this.enemies.dispose();
     this.bossManager.boss.dispose();
     this.postfx.dispose();
@@ -566,7 +599,7 @@ export class Game {
       this.bullets.update(dt, this.particles);
       this.particles.update(dt);
       this.explosions.update(dt);
-      this.starfield.update(dt, this.gameCamera.camera);
+      this.starfield.update(dt);
     }
     // paused / ready 状态不做任何逻辑计算，仅渲染
 
@@ -599,6 +632,23 @@ export class Game {
   private updateGameplay(dt: number): void {
     // 屏幕像素 → 世界单位：约 26 个世界单位铺满屏幕高度，保证拖动手感一致
     const pointerScale = 26 / Math.max(this.container.clientHeight, 1);
+
+    // 通关缓冲期：允许玩家继续移动、拾取金币 / 补给，但暂停敌机与伤害判定
+    if (this.levelClearPending) {
+      this.player.update(dt, this.input, pointerScale);
+      this.stats.update(dt);
+      this.weapon.update(dt, true, this.player.muzzles, this.bullets);
+      this.wingmen.update(dt, this.player.worldPosition, this.player.object.rotation.y, () => this.nearestTarget(), this.bullets);
+      this.pickups.update(dt, this.player.worldPosition, this.collectPickup);
+      this.bullets.update(dt, this.particles);
+      this.particles.update(dt);
+      this.explosions.update(dt);
+      this.starfield.update(dt);
+      this.levelClearTimer -= dt;
+      if (this.levelClearTimer <= 0) this.finishLevelClear();
+      return;
+    }
+
     this.player.update(dt, this.input, pointerScale);
     this.stats.update(dt);
     this.special.update(dt);
@@ -639,8 +689,10 @@ export class Game {
       particles: this.particles,
       shake: (intensity) => this.gameCamera.shake(intensity),
       onKill: (enemy) => this.killEnemy(enemy),
-      onPlayerDamaged: (result) => {
+      onPlayerDamaged: (result, position) => {
         if (result === 'hp' || result === 'dead') this.ui.triggerFlash();
+        // 护盾受击：把击中坐标交给护盾 Shader，罩面上从该点扩散涟漪
+        if (result === 'shield') this.player.shieldHit(position);
         if (result !== 'ignored') this.audio.play(result === 'shield' ? 'shield' : 'damage');
       },
       onPlayerDead: () => this.onPlayerDead(),
@@ -660,10 +712,11 @@ export class Game {
     this.player.object.visible = !this.stats.isInvulnerable || Math.floor(performance.now() / 70) % 2 === 0;
 
     this.pickups.update(dt, this.player.worldPosition, this.collectPickup);
+    this.wingmen.update(dt, this.player.worldPosition, this.player.object.rotation.y, () => this.nearestTarget(), this.bullets);
 
     this.particles.update(dt);
     this.explosions.update(dt);
-    this.starfield.update(dt, this.gameCamera.camera);
+    this.starfield.update(dt);
   }
 
   /** 激光持续伤害：绕过无敌帧，但同样走护盾 → 生命结算 */
@@ -678,9 +731,10 @@ export class Game {
   }
 
   private updateUI(elapsed: number): void {
+    this.player.setShieldRatio(this.stats.shieldRatio);
     this.ui.setStats(this.stats.hpRatio, this.stats.shieldRatio, this.score);
-    // 战斗中显示本局金币，非战斗时显示存档金币
-    this.ui.setCoins(this.state === 'playing' ? this.coins : this.progress.coins);
+    // 战斗中显示本局金币，非战斗时显示存档金币（通关缓冲期也算战斗中）
+    this.ui.setCoins(this.state === 'playing' || this.levelClearPending ? this.coins : this.progress.coins);
     const boss = this.bossManager.boss;
     if (this.bossManager.active) {
       this.ui.setBoss(true, boss.name, boss.hpRatio, boss.phase);

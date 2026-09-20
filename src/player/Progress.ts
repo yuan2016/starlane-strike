@@ -196,6 +196,21 @@ export class Progress {
     this.flush();
   }
 
+  /**
+   * 战机参数恢复初始：机体回到 `falcon`、当前武器回到 `double`、
+   * 已拥有武器统一降回 Lv1、五项强化全部归零。
+   * 金币、已解锁机体 / 武器与关卡进度保留（要全量清档用 `resetAll()`）。
+   */
+  resetAircraft(): void {
+    const levels: Partial<Record<WeaponId, number>> = {};
+    for (const id of this.save.ownedWeapons) levels[id] = 1;
+    this.save.aircraft = 'falcon';
+    this.save.weapon = 'double';
+    this.save.weaponLevels = levels;
+    this.save.upgrades = { hp: 0, atk: 0, def: 0, crit: 0, fireRate: 0 };
+    this.flush();
+  }
+
   resetAll(): void {
     this.save = loadSave();
     localStorage.removeItem('starlane.save.v1');

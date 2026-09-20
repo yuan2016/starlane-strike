@@ -50,7 +50,8 @@ export class LevelSelectUI {
     this.root.hidden = true;
   }
 
-  private render(): void {
+  /** 重新渲染列表（存档变化时外部可调用） */
+  render(): void {
     this.starTotal.textContent = `★ ${this.progress.totalStars} / ${LEVELS.length * 3}`;
     this.list.innerHTML = '';
 

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { AircraftDef } from '../data/aircraft';
-import { applyEngineHeat, applyRimLight } from '../render/MaterialFX';
+import { applyEngineHeat, applyRimLight, createShieldMaterial } from '../render/MaterialFX';
 import {
   PLAYER_MODEL_URL,
   disposeModelMaterials,
@@ -14,6 +14,17 @@ import {
   getEngineMaps,
   getSurfaceMaps,
 } from '../render/ProcTextures';
+
+/** 玩家护盾颜色：清透天蓝（薄膜质感，不再偏白高亮） */
+const PLAYER_SHIELD_COLOR = 0x4d9fff;
+/** 护盾生成动画时长（秒）：扫描展开 + 放大 */
+const SHIELD_SPAWN_TIME = 0.42;
+/** 护盾破裂动画时长（秒）：网格瓦解 + 淡出 */
+const SHIELD_BREAK_TIME = 0.45;
+/** 受击涟漪时长（秒）：强度 1→0，短促轻盈（0.15~0.25s 量级） */
+const SHIELD_RIPPLE_TIME = 0.2;
+/** GLB 迟迟不到位时，恢复程序化机体的兜底时间（毫秒）：宁可晚一点出飞机，也不要闪旧模型 */
+const MODEL_FALLBACK_DELAY = 1200;
 
 /**
  * 玩家机外观：优先使用外部 GLB 模型（`def.model` / 默认 player_fighter.glb），
@@ -47,6 +58,24 @@ export class PlayerAircraft {
   private readonly shell = new THREE.Group();
   private modelRoot: THREE.Group | null = null;
   private disposed = false;
+
+  /** 玩家护盾可视化：薄膜罩 + 受击涟漪 + 生成 / 破裂动画 */
+  private readonly shieldMesh: THREE.Mesh;
+  private shieldRatio = 1;
+  /** 护盾状态机：生成 → 常驻 → 破裂 → 隐藏 */
+  private shieldState: 'hidden' | 'spawning' | 'active' | 'breaking' = 'hidden';
+  /** 生成进度 0→1（Shader 扫描展开 + 尺寸 easeOut） */
+  private shieldSpawn = 0;
+  /** 破裂进度 0→1（网格瓦解 + 淡出） */
+  private shieldBreak = 0;
+  /** 受击涟漪强度 1→0，同时驱动波纹半径 */
+  private shieldHitStrength = 0;
+  /** 护盾泡半径（group 局部空间，单位球缩放），按机体包围球自动贴合 */
+  private shieldRadius = 3;
+  private readonly shieldCenter = new THREE.Vector3();
+  /** 击中点在单位球空间的局部坐标（护盾 Shader 的 uHitPosition） */
+  private readonly hitLocal = new THREE.Vector3(0, 1, 0);
+  private readonly invGroup = new THREE.Matrix4();
 
   constructor(def: AircraftDef) {
     this.def = def;
@@ -179,10 +208,35 @@ export class PlayerAircraft {
     this.buildEngines();
     this.buildMuzzles();
     this.group.add(this.shell);
+
+    // 护盾外壳：复用能量护盾 Shader，调成极薄的淡蓝薄膜——
+    // 中心 alpha = 0、网格极淡、只有最外圈一条极窄的淡蓝微光
+    // 几何体是单位球，尺寸 / 位置由 updateShieldFit() 按机体包围球自动贴合
+    this.shieldMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 48, 32),
+      createShieldMaterial(PLAYER_SHIELD_COLOR, {
+        core: 0, // 罩内不做任何填充
+        hexAlpha: 1.6, // 蜂窝网很淡
+        hexCenter: 0.05, // 中心几乎不留网格
+        rimPower: 3.4, // 边缘带压得极窄
+        rimAlpha: 3.2, // 边缘单独给一点亮度（乘上 uOpacity 后 ≈ 0.45）
+        baseGain: 0.6, // 底色压暗
+        rimGain: 0.45, // 边缘不刷白，保持淡蓝微光
+      }),
+    );
+    this.shieldMesh.name = 'player-shield';
+    this.shieldMesh.visible = false;
+    this.group.add(this.shieldMesh);
+    this.updateShieldFit();
+    // 护盾就绪后再挂模型：applyModel 会按新包围球重算护盾
     this.mountExternalModel();
   }
 
-  /** 外部 GLB：已缓存就直接挂，否则后台加载完再顶掉程序化机体 */
+  /**
+   * 外部 GLB：已缓存就直接挂（进场即最终外观，不会闪）；
+   * 没缓存则**先不显示程序化机体**——否则会先看到旧飞机，加载完再"闪"一下换成 GLB。
+   * 网络太慢时由 `MODEL_FALLBACK_DELAY` 兜底恢复程序化机体，保证玩家不会没有飞机。
+   */
   private mountExternalModel(): void {
     const url = this.def.model ?? PLAYER_MODEL_URL;
     const cached = getModel(url);
@@ -190,15 +244,30 @@ export class PlayerAircraft {
       this.applyModel(cached);
       return;
     }
+
+    this.shell.visible = false;
+    let timer = 0;
+    const useShell = (): void => {
+      if (timer) window.clearTimeout(timer);
+      // 已经挂上 GLB 就别再把程序化机体放出来
+      if (!this.modelRoot) this.shell.visible = true;
+    };
+    timer = window.setTimeout(useShell, MODEL_FALLBACK_DELAY);
+
     preloadModel(url)
       .then(() => {
         if (this.disposed) return;
         const model = getModel(url);
+        // 程序化机体此时仍是隐藏的，缺模型就把它放出来顶上
         if (model) this.applyModel(model);
+        else useShell();
       })
       .catch(() => {
-        // 程序化机体已在场，缺模型不影响可玩性
         console.warn('[model] 玩家机模型加载失败，沿用程序化机体：', url);
+        useShell();
+      })
+      .finally(() => {
+        if (timer) window.clearTimeout(timer);
       });
   }
 
@@ -207,6 +276,8 @@ export class PlayerAircraft {
     this.shell.visible = false;
     this.group.add(model);
     this.modelRoot = model;
+    // 模型尺寸与程序化机体不同，护盾泡要按新包围球重算
+    this.updateShieldFit();
   }
 
   private buildFuselage(): void {
@@ -315,6 +386,96 @@ export class PlayerAircraft {
       const mat = this.flames[i].material as THREE.MeshBasicMaterial;
       mat.opacity = isCore ? 0.85 : 0.62 + pulse * 0.3;
     }
+
+    // 护罩状态机 + uniform 驱动（生成 / 常驻 / 受击涟漪 / 破裂）
+    this.updateShield(dt);
+  }
+
+  setShieldRatio(ratio: number): void {
+    this.shieldRatio = Math.max(0, Math.min(1, ratio));
+    const hasShield = this.shieldRatio > 0;
+    if (hasShield && (this.shieldState === 'hidden' || this.shieldState === 'breaking')) {
+      // 新护盾（开局 / 补给）：从头播放生成动画
+      this.shieldState = 'spawning';
+      this.shieldSpawn = 0;
+      this.shieldBreak = 0;
+      this.shieldHitStrength = 0;
+    } else if (!hasShield && (this.shieldState === 'active' || this.shieldState === 'spawning')) {
+      // 护盾被打空：能量解体，而不是啪地隐藏
+      this.shieldState = 'breaking';
+      this.shieldBreak = 0;
+    }
+  }
+
+  /** 护盾受击：worldPoint 为世界空间击中坐标，用于在罩面上定位涟漪 */
+  shieldHit(worldPoint?: THREE.Vector3): void {
+    this.shieldHitStrength = 1;
+    if (worldPoint) {
+      // 世界坐标 → group 局部 → 相对罩心 → 单位球方向
+      this.group.updateWorldMatrix(true, false);
+      this.invGroup.copy(this.group.matrixWorld).invert();
+      this.hitLocal.copy(worldPoint).applyMatrix4(this.invGroup).sub(this.shieldCenter);
+      if (this.hitLocal.lengthSq() < 1e-6) this.hitLocal.set(0, 0.4, -1);
+      this.hitLocal.normalize();
+    } else {
+      // 没有坐标时默认打在机头上方
+      this.hitLocal.set(0, 0.4, -1).normalize();
+    }
+    (this.shieldMesh.material as THREE.ShaderMaterial).uniforms.uHitPosition.value.copy(this.hitLocal);
+  }
+
+  /** 护盾状态推进 + Shader uniform 同步 */
+  private updateShield(dt: number): void {
+    const mat = this.shieldMesh.material as THREE.ShaderMaterial;
+    const u = mat.uniforms;
+
+    if (this.shieldState === 'spawning') {
+      this.shieldSpawn = Math.min(1, this.shieldSpawn + dt / SHIELD_SPAWN_TIME);
+      if (this.shieldSpawn >= 1) this.shieldState = 'active';
+    } else if (this.shieldState === 'breaking') {
+      this.shieldBreak = Math.min(1, this.shieldBreak + dt / SHIELD_BREAK_TIME);
+      if (this.shieldBreak >= 1) this.shieldState = 'hidden';
+    }
+    if (this.shieldHitStrength > 0) {
+      this.shieldHitStrength = Math.max(0, this.shieldHitStrength - dt / SHIELD_RIPPLE_TIME);
+    }
+
+    this.shieldMesh.visible = this.shieldState !== 'hidden';
+    if (!this.shieldMesh.visible) return;
+
+    u.uTime.value = this.time;
+    u.uSpawn.value = this.shieldSpawn;
+    u.uBreak.value = this.shieldBreak;
+    u.uHitStrength.value = this.shieldHitStrength;
+    // 极薄：整体 alpha 只有 0.05~0.15。受击**不**整体提亮 / 不闪烁，
+    // 反馈只来自 Shader 里击中点那一小圈涟漪
+    u.uOpacity.value = 0.05 + this.shieldRatio * 0.1;
+
+    // 尺寸：生成时 easeOut 展开（Shader 同时有一条扫描线），破裂时略微膨胀再瓦解
+    const spawnEase = 1 - Math.pow(1 - this.shieldSpawn, 3);
+    const pulse = 1 + Math.sin(this.time * 5.5) * 0.03;
+    this.shieldMesh.scale.setScalar(
+      this.shieldRadius * spawnEase * pulse * (1 + this.shieldBreak * 0.14),
+    );
+  }
+
+  /** 护盾泡贴合机体：按外部模型（优先）或程序化机体的包围球计算半径与中心 */
+  private updateShieldFit(): void {
+    if (!this.shieldMesh) return;
+    const target = this.modelRoot ?? this.shell;
+    this.group.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(target);
+    if (box.isEmpty()) return;
+
+    // 包围盒是世界空间的，转回 group 局部空间（护盾是 group 的子节点）
+    const inv = new THREE.Matrix4().copy(this.group.matrixWorld).invert();
+    box.applyMatrix4(inv);
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    this.shieldCenter.copy(sphere.center);
+    // 留 8% 余量：脉动缩放时也不会露出机头 / 翼尖
+    this.shieldRadius = sphere.radius * 1.08;
+    this.shieldMesh.position.copy(this.shieldCenter);
+    this.shieldMesh.scale.setScalar(this.shieldRadius);
   }
 
   dispose(): void {
@@ -337,5 +498,6 @@ export class PlayerAircraft {
     this.nozzleMaterial.dispose();
     this.flameMaterial.dispose();
     this.coreMaterial.dispose();
+    (this.shieldMesh.material as THREE.Material).dispose();
   }
 }

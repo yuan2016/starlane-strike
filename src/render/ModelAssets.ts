@@ -22,6 +22,13 @@ export const PLAYER_MODEL_LENGTH = 4.8;
 /** 该 GLB 机头朝 +Z → 绕 Y 转 180° 才是游戏约定的 -Z */
 export const PLAYER_MODEL_YAW = Math.PI;
 
+/** Boss 母舰模型：Blender 内 +Y = 舰首，导出 glTF 后为 +Z，与 Boss.ts 的 +Z 朝向一致 */
+export const BOSS_MODEL_URL = `${import.meta.env.BASE_URL}models/boss_battleship.glb`;
+/** 归一化后的舰体长度（沿 Z），与程序化母舰（约 12.2，含舰首锥）相近 */
+export const BOSS_MODEL_LENGTH = 12.2;
+/** 模型舰首朝 +Z，与游戏约定一致，无需掉头 */
+export const BOSS_MODEL_YAW = 0;
+
 const loader = new GLTFLoader();
 const pending = new Map<string, Promise<THREE.Group>>();
 const loaded = new Map<string, THREE.Group>();
@@ -110,7 +117,52 @@ export function preparePlayerModel(model: THREE.Group, def: AircraftDef): void {
   });
 }
 
+function applyBossTint(
+  mat: THREE.MeshStandardMaterial,
+  hull: THREE.Color,
+  plate: THREE.Color,
+  glow: THREE.Color,
+): void {
+  if (mat.name === 'TitaniumHull') {
+    mat.color.lerp(hull, 0.5);
+    applyRimLight(mat, { color: 0x5aa8ff, power: 2.6, strength: 0.38 });
+  } else if (mat.name === 'ArmorPlate') {
+    mat.color.lerp(plate, 0.5);
+    applyRimLight(mat, { color: 0x3f7fd0, power: 2.4, strength: 0.26 });
+  } else if (mat.name === 'LaserMuzzle' || mat.name === 'CyanEnergy') {
+    mat.emissive.copy(glow);
+  } else {
+    applyRimLight(mat, { color: 0x9fb8d8, power: 2.4, strength: 0.5 });
+  }
+}
+export interface BossModelTint {
+  hull: number;
+  plate: number;
+  glow: number;
+}
+
 /** 释放实例独占的材质（几何体是共享的，不能在这里 dispose） */
+export function prepareBossModel(model: THREE.Group, tint: BossModelTint): void {
+  // 舰体按 Boss.ts 坐标系建模（炮塔 ±6.4 / z1.2 与命中盒一致），只缩放、不居中平移
+  model.updateMatrixWorld(true);
+  const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+  model.scale.multiplyScalar(BOSS_MODEL_LENGTH / Math.max(size.z, 1e-3));
+  const hull = new THREE.Color(tint.hull);
+  const plate = new THREE.Color(tint.plate);
+  const glow = new THREE.Color(tint.glow);
+  model.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh)) return;
+    const mat = obj.material as THREE.Material;
+    const cloned = mat.clone();
+    cloned.userData.owned = true;
+    if (cloned instanceof THREE.MeshStandardMaterial) {
+      cloned.envMapIntensity = 1.3;
+      applyBossTint(cloned, hull, plate, glow);
+    }
+    obj.material = cloned;
+  });
+}
+
 export function disposeModelMaterials(model: THREE.Object3D): void {
   model.traverse((obj) => {
     if (!(obj instanceof THREE.Mesh)) return;

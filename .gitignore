@@ -18,7 +18,13 @@ Thumbs.db
 # 本地 AI / 调试会话数据（不入库）
 .codebuddy/
 
-# 离线烘焙的 PBR 贴图：约 72 MB，可由 `node tools/pbr/bake.mjs` 重新生成
-# 游戏缺贴图时会自动回退到程序化贴图，缺了也能跑
-# 想让它一并进仓库，把下面这行注释掉即可
+# 离线烘焙的 PBR 贴图：约 72 MB，生成产物，不入库
+# 恢复方式（新克隆必做）：npm run bake（约 5 分钟）→ 详见 README 第二节
+# 缺贴图时游戏自动回退到程序化贴图，不会黑屏；想让它进仓库就把下面这行注释掉
 public/textures/pbr/
+
+# Blender 脚本跑出来的预览渲染图：仅造型核对用，重跑脚本即恢复
+tools/blender/preview_*.png
+
+# Blender 自动保存的备份工程（.blend 的后缀备份），不入库
+*.blend1

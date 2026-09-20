@@ -144,7 +144,8 @@ export class DamageSystem {
       return;
     }
 
-    ctx.explosions.hitSpark(position, result === 'shield' ? 0x6fd6ff : 0xff8a5c);
+    // 护盾命中：淡蓝色接触火花，与护盾薄膜同色系
+    ctx.explosions.hitSpark(position, result === 'shield' ? 0x4d9fff : 0xff8a5c);
     ctx.shake(result === 'shield' ? 0.12 : 0.22);
     ctx.onPlayerDamaged(result, position);
   }

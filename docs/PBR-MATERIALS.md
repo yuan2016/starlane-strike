@@ -177,11 +177,23 @@ const ktx2 = new KTX2Loader().setTranscoderPath('basis/').detectSupport(renderer
 
 ## 六、重新烘焙
 
+> **新克隆仓库必读**：`public/textures/pbr/` 约 72 MB，是生成产物，已在 `.gitignore` 中不入库。
+> 缺图时游戏会自动回退到程序化贴图（能跑，质感差一档），跑一次下面的命令即可恢复。
+
 ```bash
-node tools/pbr/bake.mjs              # 全量（约 5 分钟，172 张）
+npm run bake                                 # 全量（约 5 分钟，172 张）
 node tools/pbr/bake.mjs --only planet        # 只烘星球
 node tools/pbr/bake.mjs --only player_hull   # 只烘某一套机体
+node tools/pbr/bake.mjs --out /tmp/pbr       # 换输出目录
 ```
+
+验证是否生效（三选一）：
+
+1. `public/textures/pbr/manifest.json` 已生成；
+2. 浏览器 Network 里 `textures/pbr/**/*.png` 返回 200；
+3. 运行时 `getSurfaceMaps('hull').aoMap !== undefined`（程序化回退没有 AO）。
+
+环境：Node ≥ 20，脚本零第三方依赖。构建时 `public/` 会被原样拷进 `dist/`，部署需一起上传。
 
 改参数的位置：
 

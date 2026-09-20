@@ -4,6 +4,13 @@ import type { BulletSystem } from '../combat/BulletSystem';
 import type { ParticleSystem } from '../effects/ParticleSystem';
 import type { ExplosionSystem } from '../effects/Explosion';
 import { applyRimLight } from '../render/MaterialFX';
+import {
+  BOSS_MODEL_URL,
+  disposeModelMaterials,
+  getModel,
+  prepareBossModel,
+  preloadModel,
+} from '../render/ModelAssets';
 import { getCircuitTexture, getEnergyTexture, getSurfaceMaps } from '../render/ProcTextures';
 
 export type BossPhase = 1 | 2 | 3;
@@ -149,6 +156,12 @@ export class Boss {
   radius = 3.6;
 
   private age = 0;
+  /**
+   * 战斗阶段的横移时钟（秒）。入场结束切入战斗时**从 0 开始**，
+   * 保证 `sin(0) = 0` → 舰体从入场时的正中央（x=0 / z=-16）连续过渡到左右巡航，
+   * 不会在第一帧跳到 `sin(age * 0.42)` 的当前相位上。
+   */
+  private swayTime = 0;
   private attackTimer = 2;
   private patternStep = 0;
   private dyingTimer = 0;
@@ -183,6 +196,13 @@ export class Boss {
   private readonly gearSpin: number[] = [];
   /** 机翼回路贴图（独立 clone，便于单独滚动 offset 做流光） */
   private readonly circuitMap: THREE.Texture;
+
+  /** 程序化舰体（GLB 到位后隐藏） */
+  private readonly shell = new THREE.Group();
+  /** 外部 GLB 实例 */
+  private modelRoot: THREE.Group | null = null;
+  /** GLB 克隆材质（按名称在 spawn 时同步变体配色） */
+  private readonly modelMats: THREE.MeshStandardMaterial[] = [];
 
   private readonly tmp = new THREE.Vector3();
   private readonly muzzle = new THREE.Vector3();
@@ -310,7 +330,8 @@ export class Boss {
     prow.position.set(0, 0.2, 5.6);
     const bridge = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.0, 2.6), plateMat);
     bridge.position.set(0, 1.9, -1.4);
-    this.group.add(hull, upper, prow, bridge);
+    this.shell.add(hull, upper, prow, bridge);
+    this.group.add(this.shell);
 
     // 侧翼：Shape 轮廓 → ExtrudeGeometry 挤出厚度（倒角 1 段，保留硬切面）
     const wingGeo = new THREE.ExtrudeGeometry(createWingShape(), {
@@ -349,7 +370,7 @@ export class Boss {
       fin.position.set(side * 4.3, 0.5, -0.9);
       fin.rotation.y = -Math.PI / 2; // 安定面立起来，法线朝舷侧
       pivot.add(fin);
-      this.group.add(pivot);
+      this.shell.add(pivot);
 
       // 炮台整体作为一个可击毁部件
       const turret = new THREE.Group();
@@ -361,7 +382,7 @@ export class Boss {
       const muzzleGlow = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 8), glowMat);
       muzzleGlow.position.z = 3.3;
       turret.add(turretBase, barrel, muzzleGlow);
-      this.group.add(turret);
+      this.shell.add(turret);
       this.turretMeshes.push(turret);
 
       for (const zz of [-2.4, 0.6]) {
@@ -371,7 +392,7 @@ export class Boss {
         const flame = new THREE.Mesh(new THREE.SphereGeometry(0.45, 10, 8), glowMat);
         flame.position.set(side * 3.6, -0.2, -4.4 + zz);
         flame.scale.z = 1.6;
-        this.group.add(engine, flame);
+        this.shell.add(engine, flame);
       }
     }
 
@@ -380,7 +401,7 @@ export class Boss {
       const gun = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.48, 4.4, 12), hullMat);
       gun.rotation.x = Math.PI / 2;
       gun.position.set(side * 1.6, -0.2, 4.6);
-      this.group.add(gun);
+      this.shell.add(gun);
     }
 
     // 中央核心：#ff1100 高强度自发光球体 + 粗糙外壳齿轮包裹
@@ -479,6 +500,54 @@ export class Boss {
         mesh: side < 0 ? this.turretMeshes[0] : this.turretMeshes[1],
       });
     }
+
+    this.mountExternalModel();
+  }
+
+  /** 外部 GLB：已缓存就直接挂，否则后台加载完再顶替程序化舰体 */
+  private mountExternalModel(): void {
+    const cached = getModel(BOSS_MODEL_URL);
+    if (cached) {
+      this.applyModel(cached);
+      return;
+    }
+    preloadModel(BOSS_MODEL_URL)
+      .then(() => {
+        const model = getModel(BOSS_MODEL_URL);
+        if (model) this.applyModel(model);
+        this.syncModelTint();
+      })
+      .catch(() => {
+        // 程序化舰体已在场，缺模型不影响可玩性
+      });
+  }
+
+  /** 挂载 GLB：归一化后顶掉程序化舰体，并记录材质用于变体配色同步 */
+  private applyModel(model: THREE.Group): void {
+    if (this.modelRoot) {
+      this.group.remove(this.modelRoot);
+      disposeModelMaterials(this.modelRoot);
+    }
+    prepareBossModel(model, this.preset);
+    this.modelMats.length = 0;
+    model.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return;
+      const mat = obj.material;
+      if (mat instanceof THREE.MeshStandardMaterial) this.modelMats.push(mat);
+    });
+    this.shell.visible = false;
+    this.group.add(model);
+    this.modelRoot = model;
+  }
+
+  /** 变体配色：GLB 材质按名称向 preset 配色靠拢 */
+  private syncModelTint(): void {
+    const hull = new THREE.Color(this.preset.hull);
+    const plate = new THREE.Color(this.preset.plate);
+    for (const mat of this.modelMats) {
+      if (mat.name === 'TitaniumHull') mat.color.lerp(hull, 0.5);
+      else if (mat.name === 'ArmorPlate') mat.color.lerp(plate, 0.5);
+    }
   }
 
   get phase(): BossPhase {
@@ -512,6 +581,7 @@ export class Boss {
     this.plateMaterial.color.set(preset.plate);
     this.glowMaterial.color.set(preset.glow);
     this.glowMaterial.emissive.set(preset.glow);
+    this.syncModelTint();
     // 核心本体固定 #ff1100，变体配色走核心光环
     this.coreAuraMaterial.color.set(preset.core);
     this.hitboxes[0].maxHp = preset.maxHp;
@@ -521,6 +591,7 @@ export class Boss {
     this.active = true;
     this.state = 'entering';
     this.age = 0;
+    this.swayTime = 0;
     this.attackTimer = 2.4;
     this.patternStep = 0;
     this.dyingTimer = 0;
@@ -581,13 +652,16 @@ export class Boss {
         if (this.position.z >= -16) {
           this.position.z = -16;
           this.state = 'fighting';
+          // 从 0 起算：横移 / 前后浮动 / 侧倾都从"入场终态"开始，避免切状态瞬间弹一下
+          this.swayTime = 0;
         }
         break;
       }
       case 'fighting': {
-        this.position.x = Math.sin(this.age * 0.42) * 5.6;
-        this.position.z = -16 + Math.sin(this.age * 0.6) * 1.4;
-        this.group.rotation.z = Math.sin(this.age * 0.42) * 0.05;
+        this.swayTime += dt;
+        this.position.x = Math.sin(this.swayTime * 0.42) * 5.6;
+        this.position.z = -16 + Math.sin(this.swayTime * 0.6) * 1.4;
+        this.group.rotation.z = Math.sin(this.swayTime * 0.42) * 0.05;
         this.updateAttacks(dt, ctx);
         break;
       }
@@ -920,6 +994,12 @@ export class Boss {
   }
 
   dispose(): void {
+    // 先摘掉 GLB：几何体是全局共享的，不能随 Boss 一起 dispose
+    if (this.modelRoot) {
+      this.group.remove(this.modelRoot);
+      disposeModelMaterials(this.modelRoot);
+      this.modelRoot = null;
+    }
     this.group.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         obj.geometry.dispose();

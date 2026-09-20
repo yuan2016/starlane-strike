@@ -49,6 +49,15 @@ export class Player {
     return Math.min(this.velocity.length() / this.keySpeed, 1);
   }
 
+  setShieldRatio(ratio: number): void {
+    this.aircraft.setShieldRatio(ratio);
+  }
+
+  /** 护盾受击：传入世界空间击中坐标，护盾罩面会从该点扩散涟漪 */
+  shieldHit(worldPoint?: THREE.Vector3): void {
+    this.aircraft.shieldHit(worldPoint);
+  }
+
   /** 换机体：销毁旧模型并挂载新模型 */
   setAircraft(def: AircraftDef): void {
     this.object.remove(this.aircraft.group);
