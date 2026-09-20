@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <title>Starlane Strike</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #05060f;
+        font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: none;
+      }
+      #app {
+        position: fixed;
+        inset: 0;
+        display: block;
+      }
+      #app canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      /* ---------- UI ---------- */
+      [hidden] {
+        display: none !important;
+      }
+      .ui-root {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        user-select: none;
+        color: #e8f4ff;
+        font-size: 14px;
+        z-index: 10;
+      }
+      .ui-root button {
+        pointer-events: auto;
+        font-family: inherit;
+        color: inherit;
+        cursor: pointer;
+      }
+      .hud {
+        position: absolute;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 18px;
+        gap: 12px;
+      }
+      .hud-top {
+        top: 0;
+      }
+      .hud-bottom {
+        bottom: 0;
+        justify-content: center;
+        gap: 16px;
+      }
+      .hud-block {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 190px;
+      }
+      .hud-right {
+        align-items: flex-end;
+        min-width: auto;
+      }
+      .bar-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .bar-label {
+        width: 22px;
+        font-size: 11px;
+        letter-spacing: 1px;
+        color: #8fb6d8;
+      }
+      .bar {
+        position: relative;
+        width: 168px;
+        height: 10px;
+        border: 1px solid rgba(140, 200, 255, 0.35);
+        border-radius: 6px;
+        background: rgba(8, 16, 30, 0.6);
+        overflow: hidden;
+        box-shadow: 0 0 10px rgba(60, 160, 255, 0.15) inset;
+      }
+      .bar > i {
+        display: block;
+        height: 100%;
+        width: 100%;
+        transform-origin: left center;
+        transition: transform 0.12s linear;
+      }
+      .bar-hp > i {
+        background: linear-gradient(90deg, #ff4d6a, #ff9a5c);
+      }
+      .bar-shield > i {
+        background: linear-gradient(90deg, #35c8ff, #7ef2e0);
+      }
+      .hud-center {
+        text-align: center;
+        flex: 1;
+      }
+      .level-label {
+        font-size: 12px;
+        letter-spacing: 3px;
+        color: #9fd8ff;
+        text-shadow: 0 0 12px rgba(80, 180, 255, 0.6);
+      }
+      .score-value {
+        font-size: 26px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        font-variant-numeric: tabular-nums;
+        text-shadow: 0 0 16px rgba(120, 200, 255, 0.5);
+      }
+      .icon-btn {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        border: 1px solid rgba(140, 200, 255, 0.4);
+        background: rgba(10, 20, 36, 0.7);
+        font-size: 14px;
+        backdrop-filter: blur(6px);
+      }
+      .icon-btn:hover {
+        border-color: #6fd6ff;
+        box-shadow: 0 0 14px rgba(110, 220, 255, 0.4);
+      }
+      .weapon-label {
+        padding: 6px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(140, 200, 255, 0.35);
+        background: rgba(10, 20, 36, 0.65);
+        font-size: 12px;
+        letter-spacing: 2px;
+      }
+      .special-btn {
+        position: relative;
+        overflow: hidden;
+        padding: 10px 22px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 180, 90, 0.5);
+        background: linear-gradient(180deg, rgba(60, 30, 10, 0.85), rgba(20, 12, 6, 0.85));
+        font-size: 13px;
+        letter-spacing: 3px;
+        box-shadow: 0 0 18px rgba(255, 150, 60, 0.25);
+      }
+      .special-btn > i {
+        position: absolute;
+        inset: 0;
+        background: rgba(4, 8, 16, 0.72);
+        transform-origin: left center;
+        transform: scaleX(0);
+        pointer-events: none;
+      }
+      .special-btn.ready {
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          box-shadow: 0 0 12px rgba(255, 150, 60, 0.3);
+        }
+        50% {
+          box-shadow: 0 0 26px rgba(255, 180, 90, 0.75);
+        }
+      }
+      .boss-panel {
+        position: absolute;
+        top: 78px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: min(560px, 82vw);
+        text-align: center;
+      }
+      .boss-title {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        letter-spacing: 3px;
+        color: #ffb3c4;
+        margin-bottom: 5px;
+        text-shadow: 0 0 12px rgba(255, 80, 120, 0.6);
+      }
+      .bar-boss {
+        width: 100%;
+        height: 14px;
+        border-color: rgba(255, 120, 150, 0.5);
+      }
+      .bar-boss > i {
+        background: linear-gradient(90deg, #ff2d55, #ffb14d);
+      }
+      .bar-boss .tick {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: rgba(255, 255, 255, 0.55);
+      }
+      /* 当前阶段的血条段：高亮当前阶段剩余区间 */
+      .boss-seg {
+        position: absolute;
+        top: -3px;
+        bottom: -3px;
+        border: 1px solid rgba(255, 255, 255, 0.85);
+        border-radius: 3px;
+        box-shadow: 0 0 12px rgba(255, 255, 255, 0.5), inset 0 0 8px rgba(255, 255, 255, 0.22);
+        animation: seg-pulse 1.1s ease-in-out infinite;
+        pointer-events: none;
+      }
+      @keyframes seg-pulse {
+        50% {
+          opacity: 0.42;
+        }
+      }
+      .boss-panel.phase-2 #boss-fill {
+        background: linear-gradient(90deg, #ff7a18, #ffd166);
+      }
+      .boss-panel.phase-3 #boss-fill {
+        background: linear-gradient(90deg, #ff2d2d, #ff7ac0);
+      }
+      .boss-panel.phase-flash .boss-title {
+        animation: phase-flash 0.4s steps(2, end) 3;
+      }
+      @keyframes phase-flash {
+        50% {
+          opacity: 0.2;
+        }
+      }
+      .warning {
+        position: absolute;
+        top: 40%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+        animation: blink 0.55s steps(2, end) infinite;
+      }
+      .warning span {
+        display: block;
+        font-size: 44px;
+        font-weight: 800;
+        letter-spacing: 12px;
+        color: #ff5c7a;
+        text-shadow: 0 0 26px rgba(255, 60, 100, 0.8);
+      }
+      .warning small {
+        font-size: 13px;
+        letter-spacing: 6px;
+        color: #ffd0dc;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0.25;
+        }
+      }
+      /* Boss 阶段切换演出横幅 */
+      .boss-banner {
+        position: absolute;
+        top: 33%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+        pointer-events: none;
+        animation: banner-in 1.15s ease-out forwards;
+      }
+      .boss-banner b {
+        display: block;
+        font-size: 38px;
+        letter-spacing: 10px;
+        color: #ffffff;
+        text-shadow: 0 0 26px rgba(255, 190, 90, 0.9);
+      }
+      .boss-banner small {
+        font-size: 13px;
+        letter-spacing: 6px;
+        color: #ffe6a8;
+      }
+      @keyframes banner-in {
+        0% {
+          opacity: 0;
+          transform: translate(-50%, -50%) scale(1.7);
+        }
+        18% {
+          opacity: 1;
+          transform: translate(-50%, -50%) scale(1);
+        }
+        70% {
+          opacity: 1;
+        }
+        100% {
+          opacity: 0;
+        }
+      }
+      .flash {
+        position: absolute;
+        inset: 0;
+        background: #ffffff;
+        opacity: 0;
+        transition: opacity 0.35s ease-out;
+      }
+      .flash.on {
+        opacity: 0.55;
+        transition: opacity 0.05s linear;
+      }
+      .overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at 50% 40%, rgba(12, 24, 48, 0.7), rgba(3, 6, 14, 0.92));
+        pointer-events: auto;
+        backdrop-filter: blur(3px);
+      }
+      .panel {
+        width: min(420px, 86vw);
+        padding: 28px 30px;
+        border-radius: 18px;
+        border: 1px solid rgba(120, 200, 255, 0.3);
+        background: linear-gradient(160deg, rgba(16, 30, 56, 0.94), rgba(8, 14, 28, 0.94));
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55), 0 0 40px rgba(60, 160, 255, 0.12) inset;
+        text-align: center;
+      }
+      .panel h1 {
+        font-size: 30px;
+        letter-spacing: 6px;
+        margin-bottom: 6px;
+        background: linear-gradient(90deg, #7ef2e0, #6fd6ff, #b98cff);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .panel h2 {
+        font-size: 24px;
+        letter-spacing: 4px;
+        margin-bottom: 14px;
+      }
+      .panel p {
+        font-size: 13px;
+        color: #9fd8ff;
+        letter-spacing: 2px;
+        margin-bottom: 18px;
+      }
+      .primary-btn {
+        width: 100%;
+        padding: 13px 0;
+        border-radius: 12px;
+        border: 1px solid rgba(120, 220, 255, 0.55);
+        background: linear-gradient(180deg, rgba(40, 110, 180, 0.9), rgba(18, 46, 88, 0.9));
+        font-size: 15px;
+        letter-spacing: 4px;
+        box-shadow: 0 0 20px rgba(80, 180, 255, 0.3);
+      }
+      .primary-btn:hover {
+        box-shadow: 0 0 30px rgba(120, 220, 255, 0.6);
+      }
+      .tips {
+        margin-top: 18px;
+        list-style: none;
+        font-size: 12px;
+        line-height: 1.9;
+        color: #8fb6d8;
+      }
+      .toggle-row {
+        margin: 14px 0 0;
+      }
+      .toggle-btn {
+        width: 100%;
+        padding: 8px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(120, 180, 255, 0.35);
+        background: rgba(16, 28, 50, 0.7);
+        color: #cfe6ff;
+        font: inherit;
+        font-size: 13px;
+        letter-spacing: 2px;
+      }
+      .toggle-btn:hover {
+        border-color: #6fd6ff;
+        box-shadow: 0 0 14px rgba(110, 220, 255, 0.35);
+      }
+      .toggle-btn.off {
+        color: #7f95ad;
+        border-color: rgba(140, 170, 200, 0.25);
+      }
+      .stars {
+        font-size: 30px;
+        letter-spacing: 8px;
+        color: #ffd166;
+        margin-bottom: 14px;
+        text-shadow: 0 0 18px rgba(255, 200, 90, 0.6);
+      }
+      .result-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 20px;
+      }
+      .result-rows > div {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 14px;
+        border-radius: 10px;
+        background: rgba(20, 36, 64, 0.6);
+        font-size: 13px;
+      }
+      .result-rows b {
+        font-variant-numeric: tabular-nums;
+        color: #7ef2e0;
+      }
+      .pop {
+        position: fixed;
+        left: 50%;
+        bottom: 88px;
+        transform: translate(-50%, 10px);
+        padding: 6px 16px;
+        border-radius: 999px;
+        background: rgba(8, 16, 30, 0.86);
+        border: 1px solid rgba(160, 220, 255, 0.35);
+        font-size: 12px;
+        letter-spacing: 2px;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.18s ease, transform 0.18s ease;
+        z-index: 6;
+      }
+      .pop.show {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+      .pop-coin {
+        color: #ffd166;
+        border-color: rgba(255, 209, 102, 0.5);
+      }
+      .pop-power {
+        color: #ff9ab0;
+        border-color: rgba(255, 120, 150, 0.5);
+      }
+      .pop-shield {
+        color: #8fdcff;
+        border-color: rgba(110, 214, 255, 0.5);
+      }
+      .pop-heal {
+        color: #8ff2d0;
+        border-color: rgba(126, 242, 200, 0.5);
+      }
+      .coin-badge {
+        padding: 5px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 200, 90, 0.45);
+        background: rgba(30, 22, 8, 0.7);
+        color: #ffd166;
+        font-size: 12px;
+        letter-spacing: 1px;
+        font-variant-numeric: tabular-nums;
+      }
+      .ghost-btn {
+        padding: 12px 22px;
+        border-radius: 12px;
+        border: 1px solid rgba(140, 200, 255, 0.4);
+        background: rgba(12, 22, 40, 0.8);
+        font-size: 14px;
+        letter-spacing: 3px;
+      }
+      .ghost-btn:hover {
+        border-color: #6fd6ff;
+      }
+      .hangar-panel {
+        position: relative;
+        width: min(880px, 94vw);
+        max-height: 92vh;
+        overflow-y: auto;
+        text-align: left;
+      }
+      .hangar-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 14px;
+      }
+      .hangar-head h2 {
+        margin: 0;
+      }
+      .hangar-body {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+      }
+      .hangar-body section h3 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        letter-spacing: 3px;
+        color: #9fd8ff;
+      }
+      .card-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .card {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(120, 180, 255, 0.22);
+        background: rgba(16, 28, 50, 0.72);
+        text-align: left;
+        color: inherit;
+        font-size: 12px;
+        transition: border-color 0.15s, box-shadow 0.15s, transform 0.08s;
+      }
+      .card:hover {
+        border-color: rgba(120, 220, 255, 0.7);
+        box-shadow: 0 0 18px rgba(80, 180, 255, 0.25);
+      }
+      .card:active {
+        transform: scale(0.99);
+      }
+      .card-on {
+        border-color: #6fd6ff;
+        background: linear-gradient(160deg, rgba(30, 70, 120, 0.9), rgba(14, 26, 48, 0.9));
+        box-shadow: 0 0 22px rgba(110, 220, 255, 0.28);
+      }
+      .card-lock {
+        opacity: 0.72;
+      }
+      .card-mini {
+        padding: 8px 10px;
+      }
+      .card-max {
+        border-color: rgba(255, 209, 102, 0.5);
+      }
+      .card-title {
+        font-size: 13px;
+        letter-spacing: 1px;
+      }
+      .card-title b {
+        color: #7ef2e0;
+        font-weight: 600;
+      }
+      .card-desc {
+        font-size: 11px;
+        color: #8fb6d8;
+        line-height: 1.5;
+      }
+      .levels-panel {
+        position: relative;
+        width: min(720px, 94vw);
+        max-height: 92vh;
+        overflow-y: auto;
+        text-align: left;
+      }
+      .levels-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 14px;
+      }
+      .levels-head h2 {
+        margin: 0;
+      }
+      .levels-head .star-total {
+        color: #ffd166;
+        font-size: 13px;
+        letter-spacing: 2px;
+      }
+      .level-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .chapter-title {
+        margin: 12px 0 2px;
+        font-size: 12px;
+        letter-spacing: 4px;
+        color: #8fd0ff;
+        text-shadow: 0 0 12px rgba(80, 180, 255, 0.5);
+      }
+      .chapter-title:first-child {
+        margin-top: 0;
+      }
+      .level-card {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid rgba(120, 180, 255, 0.22);
+        background: rgba(16, 28, 50, 0.72);
+        color: inherit;
+        text-align: left;
+        transition: border-color 0.15s, box-shadow 0.15s, transform 0.08s;
+      }
+      .level-card:hover {
+        border-color: rgba(120, 220, 255, 0.7);
+        box-shadow: 0 0 18px rgba(80, 180, 255, 0.25);
+      }
+      .level-card:active {
+        transform: scale(0.99);
+      }
+      .level-card.locked {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .level-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 14px;
+        letter-spacing: 2px;
+      }
+      .level-id {
+        padding: 2px 8px;
+        border-radius: 8px;
+        background: rgba(40, 110, 180, 0.55);
+        font-size: 12px;
+      }
+      .level-name {
+        font-weight: 600;
+      }
+      .level-stars {
+        margin-left: auto;
+        color: #ffd166;
+        letter-spacing: 3px;
+      }
+      .level-brief {
+        font-size: 12px;
+        color: #8fb6d8;
+        line-height: 1.5;
+      }
+      .level-foot {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: #6f93b8;
+      }
+      .level-boss {
+        color: #ff9ab0;
+      }
+      .start-hint {
+        margin-top: 12px;
+        font-size: 12px;
+        color: #8fb6d8;
+        letter-spacing: 1px;
+      }
+      .start-hint b {
+        color: #7ef2e0;
+      }
+      .card-stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 2px;
+      }
+      .card-stats i {
+        font-style: normal;
+        padding: 2px 6px;
+        border-radius: 6px;
+        background: rgba(10, 20, 36, 0.8);
+        color: #b9d8f2;
+        font-size: 10px;
+      }
+      .dots {
+        letter-spacing: 3px;
+        color: #ffd166;
+        font-size: 12px;
+      }
+      .card-action {
+        align-self: flex-start;
+        margin-top: 4px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        background: rgba(80, 160, 255, 0.18);
+        color: #bfe6ff;
+        font-size: 11px;
+      }
+      .card-on .card-action {
+        background: rgba(126, 242, 224, 0.2);
+        color: #7ef2e0;
+      }
+      .hangar-foot {
+        display: flex;
+        gap: 12px;
+        margin-top: 18px;
+      }
+      .hangar-foot .primary-btn {
+        flex: 2;
+      }
+      .hangar-foot .ghost-btn {
+        flex: 1;
+      }
+      .toast {
+        position: absolute;
+        left: 50%;
+        bottom: 16px;
+        transform: translateX(-50%);
+        padding: 8px 16px;
+        border-radius: 999px;
+        background: rgba(190, 60, 90, 0.92);
+        font-size: 12px;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .toast.show {
+        animation: toast 1.8s ease-out;
+      }
+      @keyframes toast {
+        0% {
+          opacity: 0;
+          transform: translate(-50%, 8px);
+        }
+        15% {
+          opacity: 1;
+          transform: translate(-50%, 0);
+        }
+        75% {
+          opacity: 1;
+        }
+        100% {
+          opacity: 0;
+        }
+      }
+      @media (max-width: 760px) {
+        .hangar-body {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 640px) {
+        .hud {
+          padding: 10px 12px;
+        }
+        .hud-block {
+          min-width: 130px;
+        }
+        .bar {
+          width: 112px;
+        }
+        .score-value {
+          font-size: 20px;
+        }
+        .warning span {
+          font-size: 30px;
+          letter-spacing: 6px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="ui" class="ui-root">
+      <div class="hud hud-top">
+        <div class="hud-block">
+          <div class="bar-row">
+            <span class="bar-label">HP</span>
+            <div class="bar bar-hp"><i id="hp-fill"></i></div>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">SH</span>
+            <div class="bar bar-shield"><i id="shield-fill"></i></div>
+          </div>
+        </div>
+        <div class="hud-center">
+          <div id="level-label" class="level-label">1-1 太空战场</div>
+          <div id="score-value" class="score-value">0</div>
+        </div>
+        <div class="hud-block hud-right">
+          <div id="coin-badge" class="coin-badge">◈ <b>0</b></div>
+          <button id="btn-sound" class="icon-btn" title="音效 / BGM 开关 (M)">🔊</button>
+          <button id="btn-pause" class="icon-btn" title="暂停 (Esc)">❚❚</button>
+        </div>
+      </div>
+
+      <div id="boss-panel" class="boss-panel" hidden>
+        <div class="boss-title">
+          <span id="boss-name">BOSS</span>
+          <span id="boss-phase">阶段 1</span>
+        </div>
+        <div class="bar bar-boss">
+          <i id="boss-fill"></i>
+          <i id="boss-seg" class="boss-seg"></i>
+          <span class="tick" style="left: 70%"></span>
+          <span class="tick" style="left: 30%"></span>
+        </div>
+      </div>
+
+      <div id="warning" class="warning" hidden>
+        <span>WARNING</span>
+        <small>巨型敌舰正在接近</small>
+      </div>
+      <div id="boss-banner" class="boss-banner" hidden>
+        <b id="boss-banner-phase">PHASE 2</b>
+        <small id="boss-banner-text">火力全开</small>
+      </div>
+      <div id="pickup-pop" class="pop"></div>
+
+      <div class="hud hud-bottom">
+        <div id="weapon-label" class="weapon-label">双发炮</div>
+        <button id="btn-special" class="special-btn"><span>必杀</span><i id="special-cd"></i></button>
+      </div>
+
+      <div id="flash" class="flash"></div>
+
+      <div id="screen-start" class="overlay">
+        <div class="panel">
+          <h1>STARLANE STRIKE</h1>
+          <p>第一章 · 星链战线</p>
+          <button id="btn-start" class="primary-btn">快速出击</button>
+          <div style="margin-top: 10px; display: flex; gap: 10px; justify-content: center">
+            <button id="btn-missions" class="ghost-btn">任务选择</button>
+            <button id="btn-hangar" class="ghost-btn">机库装配</button>
+          </div>
+          <p class="start-hint">出击目标：<b id="start-level">1-1 太空战场</b></p>
+          <ul class="tips">
+            <li>WASD / 方向键 / 拖动屏幕 控制战机</li>
+            <li>自动开火，空格释放必杀</li>
+            <li>Esc 暂停</li>
+          </ul>
+        </div>
+      </div>
+
+      <div id="screen-pause" class="overlay" hidden>
+        <div class="panel">
+          <h2>已暂停</h2>
+          <button id="btn-resume" class="primary-btn">继续战斗</button>
+          <div class="toggle-row">
+            <button id="btn-bloom" class="toggle-btn" title="辉光后处理开关 (B)">辉光特效：开</button>
+          </div>
+          <ul class="tips">
+            <li><button id="btn-restart">重新开始本关</button></li>
+          </ul>
+        </div>
+      </div>
+
+      <div id="screen-fail" class="overlay" hidden>
+        <div class="panel">
+          <h2>战机失联</h2>
+          <p>任务失败，请重新编队出击</p>
+          <button id="btn-retry" class="primary-btn">重新挑战</button>
+          <div style="margin-top: 10px">
+            <button id="btn-fail-hangar" class="ghost-btn">返回机库</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="screen-levels" class="overlay" hidden>
+        <div class="panel levels-panel">
+          <div class="levels-head">
+            <h2>任务选择</h2>
+            <span id="levels-stars" class="star-total">★ 0 / 15</span>
+          </div>
+          <div id="level-list" class="level-list"></div>
+          <div style="margin-top: 16px">
+            <button id="btn-levels-back" class="ghost-btn">返回</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="screen-clear" class="overlay" hidden>
+        <div class="panel">
+          <h2>任务完成</h2>
+          <div id="stars" class="stars">★★☆</div>
+          <div class="result-rows">
+            <div><span>本关得分</span><b id="res-score">0</b></div>
+            <div><span>击坠数量</span><b id="res-kills">0</b></div>
+            <div><span>获得金币</span><b id="res-coins">0</b></div>
+            <div><span>历史最高</span><b id="res-best">0</b></div>
+          </div>
+          <button id="btn-next" class="primary-btn">下一关</button>
+          <div style="margin-top: 10px">
+            <button id="btn-clear-hangar" class="ghost-btn">返回机库</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="screen-hangar" class="overlay" hidden>
+        <div class="panel hangar-panel">
+          <div class="hangar-head">
+            <h2>机库装配</h2>
+            <div class="coin-badge">◈ <b id="hangar-coins">0</b></div>
+          </div>
+          <div class="hangar-body">
+            <section>
+              <h3>战机</h3>
+              <div id="aircraft-list" class="card-list"></div>
+            </section>
+            <section>
+              <h3>武器（点击已装备项可强化）</h3>
+              <div id="weapon-list" class="card-list"></div>
+            </section>
+            <section>
+              <h3>强化</h3>
+              <div id="upgrade-list" class="card-list"></div>
+            </section>
+          </div>
+          <div class="hangar-foot">
+            <button id="btn-hangar-launch" class="primary-btn">出击</button>
+            <button id="btn-hangar-back" class="ghost-btn">返回</button>
+          </div>
+          <div id="hangar-toast" class="toast"></div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

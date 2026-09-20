@@ -1,0 +1,24 @@
+# 依赖与构建产物
+node_modules/
+dist/
+.vite/
+
+# 日志
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.playwright-cli/
+
+# 本地 AI / 调试会话数据（不入库）
+.codebuddy/
+
+# 离线烘焙的 PBR 贴图：约 72 MB，可由 `node tools/pbr/bake.mjs` 重新生成
+# 游戏缺贴图时会自动回退到程序化贴图，缺了也能跑
+# 想让它一并进仓库，把下面这行注释掉即可
+public/textures/pbr/
